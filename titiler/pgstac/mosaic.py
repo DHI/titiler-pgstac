@@ -1,6 +1,7 @@
 """TiTiler.PgSTAC custom Mosaic Backend and Custom STACReader."""
 
 import json
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Type
 
 import attr
@@ -244,10 +245,12 @@ class PGSTACBackend(BaseBackend):
         time_limit: Optional[int] = None,
         exitwhenfull: Optional[bool] = None,
         skipcovered: Optional[bool] = None,
+        datetime_start: Optional[str] = None,
+        datetime_end: Optional[str] = None,
     ) -> List[Dict]:
         """Find assets."""
         fields = fields or {
-            "include": ["assets", "id", "bbox", "collection"],
+            "include": ["assets", "id", "bbox", "collection", "properties.datetime"],
         }
 
         scan_limit = scan_limit or 10000
@@ -260,9 +263,11 @@ class PGSTACBackend(BaseBackend):
             with conn.cursor() as cursor:
                 try:
                     cursor.execute(
-                        "SELECT * FROM geojsonsearch(%s, %s, %s, %s, %s, %s, %s, %s);",
+                        "SELECT * FROM geojsonsearch(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s);",
                         (
                             geom.json(exclude_none=True),
+                            datetime_start.isoformat() if datetime_start else "-infinity",
+                            datetime_end.isoformat() if datetime_start else "infinity",
                             self.input,
                             json.dumps(fields),
                             scan_limit,
@@ -283,7 +288,8 @@ class PGSTACBackend(BaseBackend):
                     else:
                         raise e
 
-        return resp.get("features", [])
+        features = resp.get("features", [])
+        return features
 
     @property
     def _quadkeys(self) -> List[str]:
@@ -300,6 +306,7 @@ class PGSTACBackend(BaseBackend):
         time_limit: Optional[int] = None,
         exitwhenfull: Optional[bool] = None,
         skipcovered: Optional[bool] = None,
+        datetime_range: Optional[dict] = None,
         **kwargs: Any,
     ) -> Tuple[ImageData, List[str]]:
         """Get Tile from multiple observation."""
@@ -312,6 +319,7 @@ class PGSTACBackend(BaseBackend):
             time_limit=time_limit,
             exitwhenfull=exitwhenfull,
             skipcovered=skipcovered,
+            **datetime_range,
         )
 
         if not mosaic_assets:

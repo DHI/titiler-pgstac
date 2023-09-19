@@ -4,6 +4,7 @@ import re
 import sys
 import warnings
 from dataclasses import dataclass
+from datetime import datetime
 from typing import (
     Any,
     Callable,
@@ -37,6 +38,7 @@ from starlette.routing import NoMatchFound
 from starlette.templating import Jinja2Templates
 
 from titiler.core.dependencies import (
+    DefaultDependency,
     AssetsBidxExprParams,
     CoordCRSParams,
     DefaultDependency,
@@ -82,12 +84,65 @@ DEFAULT_TEMPLATES = Jinja2Templates(
 
 
 @dataclass
+class FilteringParams(DefaultDependency):
+    """Assets, Expression and Asset's band Indexes parameters but with no requirement."""
+
+    datetime_range: Annotated[
+        Optional[str],
+        Query(
+            title="Assets datetime range",
+            description="Assets datetime range (coma separated datetime strings).",
+            examples={
+                "datetime_range": {
+                    "description": "Return assets between time ranges 2023-01-01T00:00:00 and 2023-01-01T23:59:59. Accepts also single dates.",
+                    "value": ["2023-01-01T00:00:00,2023-01-01T23:59:59"],
+                },
+            },
+        ),
+    ] = None
+
+    def __post_init__(self):
+        """Post Init."""
+
+        self.datetime_range = self.datetime_range.split(",") if self.datetime_range else None
+
+        if not self.datetime_range:
+            self.datetime_range = {
+                "datetime_start": None,
+                "datetime_end": None,
+            }
+            return
+
+        if len(self.datetime_range) == 1:
+            try:
+                datetime_start = datetime.strptime(self.datetime_range[0], "%Y-%m-%d")
+            except ValueError as ex:
+                datetime_start = datetime.strptime(self.datetime_range[0], "%Y-%m-%dT%H:%M:%SZ")
+
+            datetime_end = datetime_start.replace(hour=23, minute=59, second=59)
+            self.datetime_range = {
+                "datetime_start": datetime_start,
+                "datetime_end": datetime_end,
+            }
+            return
+
+        if len(self.datetime_range) == 2:
+            datetime_start, datetime_end = self.datetime_range
+            self.datetime_range = {
+                "datetime_start": datetime.strptime(datetime_start, "%Y-%m-%dT%H:%M:%SZ"),
+                "datetime_end": datetime.strptime(datetime_end, "%Y-%m-%dT%H:%M:%SZ"),
+            }
+            return
+
+
+@dataclass
 class MosaicTilerFactory(BaseTilerFactory):
     """Custom MosaicTiler for PgSTAC Mosaic Backend."""
 
     reader: Type[BaseBackend] = PGSTACBackend
     path_dependency: Callable[..., str] = PathParams
     layer_dependency: Type[DefaultDependency] = AssetsBidxExprParams
+    filtering_dependency: Type[DefaultDependency] = FilteringParams
 
     # Statistics/Histogram Dependencies
     stats_dependency: Type[DefaultDependency] = StatisticsParams
@@ -197,6 +252,7 @@ class MosaicTilerFactory(BaseTilerFactory):
             layer_params=Depends(self.layer_dependency),
             dataset_params=Depends(self.dataset_dependency),
             pixel_selection=Depends(self.pixel_selection_dependency),
+            filtering_params=Depends(self.filtering_dependency),
             buffer: Annotated[
                 Optional[float],
                 Query(
@@ -256,6 +312,7 @@ class MosaicTilerFactory(BaseTilerFactory):
                         buffer=buffer,
                         pixel_selection=pixel_selection,
                         threads=threads,
+                        **filtering_params,
                         **layer_params,
                         **dataset_params,
                         **pgstac_params,
